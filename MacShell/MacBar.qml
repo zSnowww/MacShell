@@ -455,8 +455,8 @@ Scope {
         { id: "gaming",     label: I18n.tr("Game Mode"),     glyph: "gamepad",    w: 2, h: 1, sizes: ccBtnSizes },
         { id: "record",     label: I18n.tr("Screen Recording"), glyph: "record",  w: 2, h: 1, sizes: ccBtnSizes },
         { id: "nowplaying", label: I18n.tr("Now Playing"),   glyph: "note",       w: 2, h: 2, sizes: [[2, 2], [4, 1], [4, 2]] },
-        { id: "display",    label: I18n.tr("Display"),       glyph: "sun",        w: 4, h: 1, sizes: [[4, 1]] },
-        { id: "sound",      label: I18n.tr("Sound"),         glyph: "speaker",    w: 4, h: 1, sizes: [[4, 1]] }
+        { id: "display",    label: I18n.tr("Display"),       glyph: "sun",        w: 4, h: 1, sizes: [[2, 1], [4, 1]] },
+        { id: "sound",      label: I18n.tr("Sound"),         glyph: "speaker",    w: 4, h: 1, sizes: [[2, 1], [4, 1]] }
     ]
     readonly property var ccDefault: ["wifi", "nowplaying", "bluetooth", "airplane", "focus", "record", "nightshift", "keepawake", "display", "sound"]
     // the control's definition with the size picked for it (the default when none is saved, or when the saved one isn't allowed any more)
@@ -627,6 +627,20 @@ Scope {
         next.push(id + ":" + w + ":" + h);
         ccPos = frozen;
         ccSizes = next;
+    }
+    function ccSizeLabel(sz) {
+        if (!sz || sz.length < 2) return "";
+        if (sz[0] === 1 && sz[1] === 1) return I18n.tr("Small (1×1)");
+        if (sz[0] === 2 && sz[1] === 1) return I18n.tr("Medium (2×1)");
+        if (sz[0] === 2 && sz[1] === 2) return I18n.tr("Large (2×2)");
+        if (sz[0] === 4 && sz[1] === 1) return I18n.tr("Wide (4×1)");
+        if (sz[0] === 4 && sz[1] === 2) return I18n.tr("Extra Large (4×2)");
+        return sz[0] + "×" + sz[1];
+    }
+    function ccBarWidgetFor(id) {
+        if (id === "wifi" || id === "bluetooth") return id;
+        if (id === "sound") return "volume";
+        return "";
     }
 
     readonly property string configDir: Quickshell.env("HOME") + "/.config/macbar"
@@ -5180,9 +5194,15 @@ Scope {
                 property int calMonth: 0
                 property string wifiPrompt: ""      // ssid whose password field is open in the Wi-Fi popover
                 property bool ccEdit: false         // Control Center is in "Edit Controls" mode
-                onCcEditChanged: root.ccEditing = ccEdit
+                property bool ccMenuOpen: false
+                property string ccMenuTileId: ""
+                property real ccMenuX: 0
+                property real ccMenuY: 0
+                function openCcMenu(id, cx, cy) { ccMenuTileId = id || ""; ccMenuX = cx; ccMenuY = cy; ccMenuOpen = true; }
+                function closeCcMenu() { ccMenuOpen = false; }
+                onCcEditChanged: { root.ccEditing = ccEdit; ccMenuOpen = false; }
                 property string ccPage: ""          // "" = the control grid, "wifi" = the Wi-Fi list shown inside the Control Center
-                onCcPageChanged: wifiPrompt = ""
+                onCcPageChanged: { wifiPrompt = ""; ccMenuOpen = false; }
                 property var trayItem: null         // SystemTrayItem whose menu is open in the tray popover
                 property var trayStack: []          // submenu path (QsMenuEntry objects) inside that menu
                 Timer { interval: 1500; repeat: true; running: ui.pop === "vol"; onTriggered: root.audioTick++ }
@@ -5351,7 +5371,7 @@ Scope {
                     armed = "";
                     wifiPrompt = "";
                     spHoverLabel = "";
-                    if (pop !== "cc") ccEdit = false;
+                    if (pop !== "cc") { ccEdit = false; ccMenuOpen = false; }
                     if (pop !== "cc") ccPage = "";
                     root.notifOpen = (pop === "notif");
                     if (root.notifOpen) root.notifUnread = 0;
@@ -8134,7 +8154,7 @@ Scope {
                     id: cc
                     z: 10
                     width: 300
-                    height: ui.ccPage === "" ? ccCol.height : (ui.ccPage === "wifi" ? ccWifiPage.height : ccBtPage.height)
+                    height: ui.ccPage === "" ? ccCol.height : (ui.ccPage === "wifi" ? ccWifiPage.height : (ui.ccPage === "bt" ? ccBtPage.height : ccSoundPage.height))
                     x: Math.max(8, ui.width - width - 10)
                     y: root.barH + 8
                     // opening (ColorOS 17): the panel springs out from the Control Center button, overshoots a little and
@@ -8170,6 +8190,17 @@ Scope {
                     // show straight through it). The motion lives in the controls: they slide up into place inside it.
                     onOpeningChanged: if (opening) openSeq++
                     onVisibleChanged: if (visible) { root.refreshWifi(); root.refreshBt(); root.refreshBrightness(); }
+
+                    // Swallow right-clicks inside Control Center (prevent click-away from closing it) and open ccCtx
+                    MouseArea {
+                        anchors.fill: parent
+                        z: -1
+                        acceptedButtons: Qt.AllButtons
+                        onPressed: mouse => {
+                            if (mouse.button === Qt.RightButton) ui.openCcMenu("", mouse.x, mouse.y);
+                            else ui.closeCcMenu();
+                        }
+                    }
 
                     // Resize refresh: when the menu bar is made smaller / bigger (or the panel itself changes size or position) the
                     // Control Center's backdrop capture used to stay stuck on the old rectangle. Every such change now drops and
@@ -8599,10 +8630,38 @@ Scope {
                         CCTile {
                             t: ccPal; gx: ccg
                             radius: 26
-                            Text {
-                                x: 14; y: 8
-                                text: I18n.tr("Sound")
-                                color: ccPal.fg; font.family: Fonts.forWeight(Font.DemiBold, root.boldFontFamily); font.pixelSize: 12; font.weight: Font.DemiBold
+                            Item {
+                                x: 0; y: 0; width: parent.width; height: 26
+                                Text {
+                                    x: 14; y: 8
+                                    text: I18n.tr("Sound")
+                                    color: ccPal.fg; font.family: Fonts.forWeight(Font.DemiBold, root.boldFontFamily); font.pixelSize: 12; font.weight: Font.DemiBold
+                                }
+                                Row {
+                                    anchors.right: parent.right; anchors.rightMargin: 14
+                                    y: 8
+                                    spacing: 4
+                                    Text {
+                                        visible: parent.parent.width >= 200
+                                        width: Math.min(implicitWidth, 165)
+                                        elide: Text.ElideRight
+                                        text: root.sink ? root.audioSplit(root.sink.description || root.sink.name)[0] : ""
+                                        color: sndHdrMa.containsMouse ? ccPal.fg : ccPal.fg2
+                                        font.family: root.fontForWeight(Font.Normal, ccPal.fam); font.pixelSize: 11
+                                    }
+                                    Glyph {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 9; height: 9
+                                        kind: "chevR"
+                                        color: sndHdrMa.containsMouse ? ccPal.fg : ccPal.fg2
+                                    }
+                                }
+                                MouseArea {
+                                    id: sndHdrMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: ui.ccPage = "sound"
+                                }
                             }
                             HoverHandler { id: tileHovSound }
                             CCSlider {
@@ -8652,7 +8711,7 @@ Scope {
                         Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                         GGlass { visible: root.ccStyle !== "macos"; anchors.fill: parent; gx: ccg; cornerR: 26; thickness: 22; shadowAmt: 0.45 }
                         CornerBorder { visible: root.ccStyle !== "macos"; z: 2; anchors.fill: parent; cornerR: 26; dark: ccg.dark; tint: ccg.borderTint; amount: ccg.borderAmount; lineW: 0.8 }
-                        MouseArea { anchors.fill: parent }
+                        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
                         Loader {
                             id: wifiPageLoad
                             active: ccWifiPage.shown || ccWifiPage.visible
@@ -8674,7 +8733,7 @@ Scope {
                         Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                         GGlass { visible: root.ccStyle !== "macos"; anchors.fill: parent; gx: ccg; cornerR: 26; thickness: 22; shadowAmt: 0.45 }
                         CornerBorder { visible: root.ccStyle !== "macos"; z: 2; anchors.fill: parent; cornerR: 26; dark: ccg.dark; tint: ccg.borderTint; amount: ccg.borderAmount; lineW: 0.8 }
-                        MouseArea { anchors.fill: parent }
+                        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
                         Loader {
                             id: btPageLoad
                             active: ccBtPage.shown || ccBtPage.visible
@@ -8682,6 +8741,127 @@ Scope {
                             width: parent.width - 24
                             sourceComponent: btContent
                             onLoaded: { item.pp = ccPal; item.showBack = true; item.back.connect(function () { ui.ccPage = ""; }); }
+                        }
+                    }
+
+                    // Sound output page: pick the default audio output inside the Control Center
+                    Item {
+                        id: ccSoundPage
+                        readonly property bool shown: ui.ccPage === "sound"
+                        width: parent.width
+                        height: soundPageCol.height + 24
+                        opacity: shown ? 1 : 0
+                        visible: opacity > 0.01
+                        Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                        GGlass { visible: root.ccStyle !== "macos"; anchors.fill: parent; gx: ccg; cornerR: 26; thickness: 22; shadowAmt: 0.45 }
+                        CornerBorder { visible: root.ccStyle !== "macos"; z: 2; anchors.fill: parent; cornerR: 26; dark: ccg.dark; tint: ccg.borderTint; amount: ccg.borderAmount; lineW: 0.8 }
+                        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+                        Column {
+                            id: soundPageCol
+                            x: 12; y: 12
+                            width: parent.width - 24
+                            spacing: 6
+
+                            Item {
+                                width: parent.width; height: 32
+                                Item {
+                                    x: 0; width: 30; height: parent.height
+                                    Glyph { anchors.centerIn: parent; width: 12; height: 12; kind: "chevL"; color: ccPal.fg }
+                                    MouseArea { anchors.fill: parent; onClicked: ui.ccPage = "" }
+                                }
+                                Text {
+                                    x: 30; anchors.verticalCenter: parent.verticalCenter
+                                    text: I18n.tr("Sound")
+                                    color: ccPal.fg
+                                    font.family: root.fontForWeight(Font.DemiBold, ccPal.fam); font.pixelSize: 15; font.weight: Font.DemiBold
+                                }
+                                CCBtn {
+                                    t: ccPal; gx: ccg
+                                    d: 26
+                                    glass: false
+                                    anchors.right: parent.right; anchors.rightMargin: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    kind: "speaker"; level: root.muted ? 0 : 3
+                                    on: root.muted
+                                    onClicked: root.toggleMute()
+                                }
+                            }
+                            Rectangle { width: parent.width; height: 1; color: ccPal.sep }
+                            Item {
+                                width: parent.width; height: 32
+                                CCSlider {
+                                    t: ccPal; gx: ccg
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width
+                                    value: root.muted ? 0 : root.volume
+                                    leftKind: "speaker"; leftLevel: root.volLevel
+                                    rightKind: "speaker"; rightLevel: 3
+                                    onMoved: v => root.setVolume(v)
+                                }
+                            }
+                            Text {
+                                leftPadding: 6
+                                text: I18n.tr("Output")
+                                color: ccPal.fg2
+                                font.family: root.fontForWeight(Font.DemiBold, ccPal.fam); font.pixelSize: 11; font.weight: Font.DemiBold
+                            }
+                            Flickable {
+                                id: ccSoundFlick
+                                visible: root.audioOutputs.length > 0
+                                width: parent.width
+                                height: Math.min(ccSoundList.height, 260)
+                                contentWidth: width
+                                contentHeight: ccSoundList.height
+                                clip: true
+                                boundsBehavior: Flickable.StopAtBounds
+                                Column {
+                                    id: ccSoundList
+                                    width: ccSoundFlick.width
+                                    spacing: 2
+                                    Repeater {
+                                        model: root.audioOutputs
+                                        delegate: AudioRow {
+                                            required property var modelData
+                                            t: ccPal
+                                            readonly property var parts: root.audioSplit(modelData.description || modelData.name)
+                                            title: parts[0]
+                                            sub: parts[1]
+                                            kind: root.audioKind(modelData, true)
+                                            selected: root.sink !== null && root.sink !== undefined && root.sink.id === modelData.id
+                                            onClicked: root.chooseAudio(modelData)
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                visible: root.audioOutputs.length === 0
+                                width: parent.width; height: 48
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                text: I18n.tr("No output devices")
+                                color: ccPal.fg2
+                                font.family: root.fontForWeight(Font.Normal, ccPal.fam); font.pixelSize: 13
+                            }
+                            Rectangle { width: parent.width; height: 1; color: ccPal.sep }
+                            Item {
+                                width: parent.width; height: 30
+                                Rectangle {
+                                    anchors.fill: parent; radius: 8
+                                    color: root.accent
+                                    visible: ccSsa.containsMouse
+                                }
+                                Text {
+                                    x: 10; anchors.verticalCenter: parent.verticalCenter
+                                    text: I18n.tr("Sound Settings\u2026")
+                                    color: ccSsa.containsMouse ? "white" : ccPal.fg
+                                    font.family: root.fontForWeight(Font.Normal, ccPal.fam); font.pixelSize: 13
+                                }
+                                MouseArea {
+                                    id: ccSsa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: { ui.pop = ""; root.openSettings("sound"); }
+                                }
+                            }
                         }
                     }
 
@@ -8906,17 +9086,36 @@ Scope {
                                         }
                                     }
 
-                                    // edit mode: this layer sits above the control, so clicks drag it instead of using it
+                                    // non-edit mode: catch right-clicks without intercepting left clicks so controls stay interactive
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        z: 45
+                                        enabled: !ui.ccEdit && ct.slot !== null
+                                        acceptedButtons: Qt.RightButton
+                                        onPressed: mouse => {
+                                            var p = mapToItem(cc, mouse.x, mouse.y);
+                                            ui.openCcMenu(ct.modelData.id, p.x, p.y);
+                                        }
+                                    }
+
+                                    // edit mode: this layer sits above the control, so left drags move it and right-click opens ccCtx
                                     MouseArea {
                                         id: dragArea
                                         anchors.fill: parent
                                         z: 50
                                         enabled: ui.ccEdit
                                         visible: ui.ccEdit      // a hidden area can't leave the grab cursor behind
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                                         preventStealing: true
                                         cursorShape: !ui.ccEdit ? Qt.ArrowCursor : (ct.dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
                                         property point startP: Qt.point(0, 0)
                                         onPressed: mouse => {
+                                            if (mouse.button === Qt.RightButton) {
+                                                var cp = mapToItem(cc, mouse.x, mouse.y);
+                                                ui.openCcMenu(ct.modelData.id, cp.x, cp.y);
+                                                return;
+                                            }
+                                            ui.closeCcMenu();
                                             var q = mapToItem(ccGrid, mouse.x, mouse.y);
                                             startP = Qt.point(q.x, q.y);
                                             var cells = [];
@@ -8927,7 +9126,7 @@ Scope {
                                             ct.dragging = true;
                                         }
                                         onPositionChanged: mouse => {
-                                            if (!pressed) return;
+                                            if (!pressed || !ct.dragging) return;
                                             var q = mapToItem(ccGrid, mouse.x, mouse.y);
                                             ct.dx = q.x - startP.x;
                                             ct.dy = q.y - startP.y;
@@ -8935,6 +9134,7 @@ Scope {
                                             ccGrid.ghost = root.ccSnap(ct.modelData.id, ct.slot.col * (ccGrid.cw + root.ccGap) + ct.dx, ct.slot.y + ct.dy, ccGrid.cw);
                                         }
                                         onReleased: mouse => {
+                                            if (!ct.dragging) return;
                                             var snap = ccGrid.ghost;
                                             ccGrid.ghost = null;
                                             ccGrid.dragCells = [];
@@ -9045,6 +9245,138 @@ Scope {
                                     text: ui.ccEdit ? I18n.tr("Done") : I18n.tr("Edit Controls")
                                     strong: ui.ccEdit
                                     onClicked: ui.ccEdit = !ui.ccEdit
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Control Center context menu (opened on right-click without closing CC) ──
+                    MouseArea {
+                        anchors.fill: parent
+                        z: 299
+                        visible: ui.ccMenuOpen
+                        acceptedButtons: Qt.AllButtons
+                        onPressed: ui.closeCcMenu()
+                    }
+                    Item {
+                        id: ccCtx
+                        z: 300
+                        readonly property var items: {
+                            if (!ui.ccMenuOpen) return [];
+                            var tid = ui.ccMenuTileId;
+                            var out = [];
+                            var d = tid !== "" ? root.ccDef(tid) : null;
+                            if (d && ui.ccEdit) {
+                                out.push({ kind: "header", text: I18n.tr(d.label) });
+                                if (d.sizes && d.sizes.length > 1) {
+                                    for (var i = 0; i < d.sizes.length; i++) {
+                                        var sz = d.sizes[i];
+                                        var cur = (d.w === sz[0] && d.h === sz[1]);
+                                        var fits = cur || root.ccFitsSize(tid, sz[0], sz[1]);
+                                        out.push({ kind: "size", text: root.ccSizeLabel(sz), checked: cur, enabled: fits, w: sz[0], h: sz[1], id: tid });
+                                    }
+                                    out.push({ kind: "sep" });
+                                }
+                            }
+                            if (d) {
+                                var bw = root.ccBarWidgetFor(tid);
+                                if (bw !== "") {
+                                    out.push({ kind: "barWidget", text: I18n.tr("Show in Menu Bar"), checked: root.barWidgetEnabled(bw), enabled: true, bw: bw });
+                                }
+                                if (ui.ccEdit) {
+                                    out.push({ kind: "remove", text: I18n.tr("Remove Control"), destructive: true, enabled: true, id: tid });
+                                    out.push({ kind: "sep" });
+                                }
+                            }
+                            out.push({ kind: "toggleEdit", text: ui.ccEdit ? I18n.tr("Done Editing") : I18n.tr("Edit Controls"), enabled: true });
+                            if (ui.ccEdit && tid === "") {
+                                out.push({ kind: "reset", text: I18n.tr("Reset Layout"), enabled: true });
+                            } else if (!ui.ccEdit) {
+                                out.push({ kind: "settings", text: I18n.tr("Control Center Settings\u2026"), enabled: true });
+                            }
+                            return out;
+                        }
+                        visible: opacity > 0.01
+                        opacity: ui.ccMenuOpen ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                        width: 204
+                        height: ccCtxCol.height + 12
+                        x: Math.max(4, Math.min(cc.width - width - 4, ui.ccMenuX - (ui.ccMenuX > cc.width / 2 ? width : 0)))
+                        y: Math.max(4, Math.min(Math.max(4, cc.height - height - 4), ui.ccMenuY))
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 14
+                            color: ccPal.dark ? Qt.rgba(0.14, 0.14, 0.17, 0.94) : Qt.rgba(0.96, 0.96, 0.98, 0.95)
+                            border.width: 1
+                            border.color: ccPal.dark ? Qt.rgba(1, 1, 1, 0.16) : Qt.rgba(0, 0, 0, 0.12)
+                        }
+                        Column {
+                            id: ccCtxCol
+                            x: 6; y: 6
+                            width: parent.width - 12
+                            spacing: 2
+                            Repeater {
+                                model: ccCtx.items
+                                delegate: Item {
+                                    id: cmi
+                                    required property var modelData
+                                    width: ccCtxCol.width
+                                    height: modelData.kind === "sep" ? 7 : (modelData.kind === "header" ? 22 : 28)
+                                    Rectangle {
+                                        visible: modelData.kind === "sep"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        x: 8; width: parent.width - 16; height: 1
+                                        color: ccPal.sep
+                                    }
+                                    Text {
+                                        visible: modelData.kind === "header"
+                                        x: 8; anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 16; elide: Text.ElideRight
+                                        text: modelData.text || ""
+                                        color: ccPal.fg2
+                                        font.family: root.fontForWeight(Font.DemiBold, ccPal.fam); font.pixelSize: 11; font.weight: Font.DemiBold
+                                    }
+                                    Rectangle {
+                                        visible: modelData.kind !== "sep" && modelData.kind !== "header"
+                                        anchors.fill: parent
+                                        radius: 8
+                                        color: (cmiMa.containsMouse && modelData.enabled !== false) ? root.accent : "transparent"
+                                    }
+                                    Glyph {
+                                        visible: !!modelData.checked
+                                        x: 8; anchors.verticalCenter: parent.verticalCenter
+                                        width: 12; height: 12
+                                        kind: "check"
+                                        color: (cmiMa.containsMouse && modelData.enabled !== false) ? "white" : ccPal.fg
+                                    }
+                                    Text {
+                                        visible: modelData.kind !== "sep" && modelData.kind !== "header"
+                                        x: 24; anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 30; elide: Text.ElideRight
+                                        text: modelData.text || ""
+                                        color: (cmiMa.containsMouse && modelData.enabled !== false)
+                                               ? "white"
+                                               : (modelData.enabled === false ? ccPal.fg2 : (modelData.destructive ? "#FF453A" : ccPal.fg))
+                                        opacity: modelData.enabled === false ? 0.45 : 1
+                                        font.family: root.fontForWeight(Font.Normal, ccPal.fam); font.pixelSize: 12
+                                    }
+                                    MouseArea {
+                                        id: cmiMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        enabled: modelData.kind !== "sep" && modelData.kind !== "header" && modelData.enabled !== false
+                                        onClicked: {
+                                            var k = modelData.kind, id = modelData.id, w = modelData.w, h = modelData.h, bw = modelData.bw;
+                                            var u = ui, r = root;
+                                            u.closeCcMenu();
+                                            if (k === "size") r.ccResize(id, w, h);
+                                            else if (k === "barWidget") r.setBarWidget(bw, !r.barWidgetEnabled(bw));
+                                            else if (k === "remove") r.ccRemove(id);
+                                            else if (k === "toggleEdit") u.ccEdit = !u.ccEdit;
+                                            else if (k === "reset") { r.ccControls = r.ccDefault.slice(); r.ccPos = []; r.ccSizes = []; }
+                                            else if (k === "settings") { u.pop = ""; r.openSettings("controlcenter"); }
+                                        }
+                                    }
                                 }
                             }
                         }
